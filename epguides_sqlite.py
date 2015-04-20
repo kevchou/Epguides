@@ -126,7 +126,7 @@ def str_to_date(date):
     return dt.strptime(date, '%d/%b/%y')
 
 
-def find_next_airdate(show_name):
+def find_next_airdates(show_name):
 
     conn = sqlite3.connect("tvshows.db")
     conn.text_factory = str
@@ -157,7 +157,7 @@ class Show:
 
     def __init__(self, show_name):
 
-        #add_show_to_db(show_name)
+        add_show_to_db(show_name)
 
         db = sqlite3.connect('tvshows.db')
         db.text_factory = str
@@ -195,8 +195,10 @@ class Show:
 
             episodes = {}
             for e in episode_result:
-                episodes[e['episode']] = {'airdate': str_to_date(e['airdate']),
-                                          'title': e['title']}
+                episodes[e['episode']] = Episode(s['season'],
+                                                 e['episode'],
+                                                 e['title'],
+                                                 str_to_date(e['airdate']))
 
             self.seasons[s['season']] = episodes
 
@@ -208,9 +210,9 @@ class Show:
         cur_min_days = None
 
         for season in self.seasons:
-            for ep in self.seasons[season]:
+            for episode in self.seasons[season]:
 
-                curr_airdate = self.seasons[season][ep]['airdate']
+                curr_airdate = self.seasons[season][episode].airdate
 
                 curr_days_to_ep = (curr_airdate - dt.now()).days
 
@@ -219,7 +221,7 @@ class Show:
 
                 if hasnt_aired and (curr_ep_is_closer or cur_min_days is None):
                     cur_min_days = curr_days_to_ep
-                    next_ep = (season, ep)
+                    next_ep = (season, episode)
 
         # Prints out the info for the next episode
         next_episode = self.seasons[next_ep[0]][next_ep[1]]
@@ -228,8 +230,8 @@ class Show:
         print "Airs in %s days on %s" % (cur_min_days,
                                          next_episode['airdate'])
 
-    def print_show_info(self):
-        print self.show_info
+    def __str__(self):
+        return self.id
 
 
 class Episode:
@@ -241,63 +243,11 @@ class Episode:
         self.title = title
         self.airdate = airdate
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-db = sqlite3.connect('tvshows.db')
-db.text_factory = str
-db.row_factory = sqlite3.Row
-curs = db.cursor()
-
-# Getting episode from database into dict
-show_name = "Bob's Burgers"
-
-seasons_result = curs.execute("SELECT DISTINCT season " +
-                              "FROM " + EP_LIST + " " +
-                              "WHERE show_name = ?", (show_name,))
-
-seasons_result = seasons_result.fetchall()
-
-seasons = {}
-for s in seasons_result:
-    seasons[s['season']] = {}
-
-# Add episodes to each season
-for s in seasons:
-    episode_result = curs.execute("SELECT DISTINCT episode, airdate, title " +
-                                  "FROM " + EP_LIST + " " +
-                                  "WHERE show_name = ? and season = ?",
-                                  (show_name, s))
-
-    episode_result = episode_result.fetchall()
-
-    episodes = {}
-    for e in episode_result:
-        episodes[e['episode']] = {'airdate': str_to_date(e['airdate']),
-                                  'title': e['title']}
-
-    seasons[s] = episodes
-
-
-
-
-
-
-
-
-
-
-
+    def __str__(self):
+        return "Season %s Episode %s - %s (%s)" % (self.season,
+                                                   self.episode,
+                                                   self.title,
+                                                   self.airdate)
 
 
 # Start test
