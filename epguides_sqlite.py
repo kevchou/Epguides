@@ -3,55 +3,72 @@ import urllib2
 import sqlite3
 from datetime import datetime as dt
 
-
 SHOW_LIST = 'show_list_table'
 EP_LIST = 'episode_list_table'
 
+# STRING CONSTANTS
+SEASON_NUM = 'season'
+EP_NUM = 'episode'
+EP_TITLE = 'title'
+EP_AIRDATE = 'airdate'
 
-# List of all shows
+
+class DatabaseManager(object):
+
+    def __init__(self, db):
+        self.conn = sqlite3.connect(db)
+        self.conn.text_factory = str
+        self.conn.row_factory = sqlite3.Row
+        self.curs = self.conn.cursor()
+
+    def query(self, *args):
+        self.curs.execute(*args)
+        self.conn.commit()
+        return self.curs
+
+    def querymany(self, *args):
+        self.curs.executemany(*args)
+        self.conn.commit()
+        return self.curs
+
+    def __del__(self):
+        self.conn.close()
+
+
 def refresh_show_list():
     """This function will pull a list of all the shows available on epguides and
     store it into a local SQLite database.
     """
+    try:
+        # Get CSV of all shows from epguides website
+        url = 'http://epguides.com/common/allshows.txt'
+        response = urllib2.urlopen(url)
+        csv_data = csv.reader(response)
 
-    # Create sqlite database
-    conn = sqlite3.connect('tvshows.db')
-    conn.text_factory = str
-    c = conn.cursor()
+        # Get headers from the CSV file and prepare it for CREATE TABLE statement
+        headers = csv_data.next()
+        headers = [header.replace(' ', '_') for header in headers]
 
-    # Get CSV of all shows from epguides website
-    url = 'http://epguides.com/common/allshows.txt'
-    response = urllib2.urlopen(url)
-    csv_data = csv.reader(response)
+        column_names = [('%s varchar' % header) for header in headers]
+        column_names = ',\n'.join(column_names)
 
-    # Get headers from the CSV file and prepare it for CREATE TABLE statement
-    headers = csv_data.next()
-    headers = [header.replace(' ', '_') for header in headers]
+        # Drop table if it exists then recreate it
+        dm.query("DROP TABLE IF EXISTS " + SHOW_LIST)
+        dm.query("CREATE TABLE " + SHOW_LIST + " (" + column_names + ")")
 
-    column_names = [('%s varchar' % header) for header in headers]
-    column_names = ',\n'.join(column_names)
+        # Import show data into the SQLite databasea
+        shows = []
 
-    # Drop table if it exists then recreate it
-    drop_query = "DROP TABLE IF EXISTS " + SHOW_LIST
-    c.execute(drop_query)
+        for row in csv_data:
+            shows.append(tuple(row))
 
-    create_query = "CREATE TABLE " + SHOW_LIST + " (" + column_names + ")"
-    c.execute(create_query)
+        shows = filter(None, shows)  # Remove empty strings from the show array
 
-    # Import show data into the SQLite databasea
-    shows = []
-
-    for row in csv_data:
-        shows.append(tuple(row))
-
-    shows = filter(None, shows)  # Remove empty strings from the show array
-
-    # Insert into the table
-    c.executemany("INSERT INTO " + SHOW_LIST + " VALUES (" +
-                  ','.join(['?'] * len(headers)) + ")", shows)
-
-    conn.commit()
-    conn.close()
+        # Insert values into table
+        dm.querymany("INSERT INTO " + SHOW_LIST + " VALUES (" +
+                     ','.join(['?'] * len(headers)) + ")", shows)
+    except:
+        print "Unable to refresh shows"
 
 
 def add_show_to_db(show_name):
@@ -60,63 +77,65 @@ def add_show_to_db(show_name):
     table
     """
 
-    # Connect to database
-    conn = sqlite3.connect("tvshows.db")
-    conn.text_factory = str
-    c = conn.cursor()
-
     # Get show's TVRage ID from all show table
-    r = c.execute("SELECT tvrage " +
-                  "FROM " + SHOW_LIST + " " +
-                  "WHERE title = ?", (show_name,) )
+    r = dm.query("SELECT tvrage " +
+                 "FROM " + SHOW_LIST + " " +
+                 "WHERE title = ?", (show_name,))
 
-    show_id = r.fetchone()
+    show_id_raw = r.fetchone()
 
+    # TODO: replace this IF with try/catch?
     # If show cannot be found in the database, print message
-    if show_id is None:
+    if show_id_raw is None:
         print "'" + show_name + "' cannot be found."
-        return
+        return 0
 
-    show_id = show_id[0]
+    show_id = show_id_raw['tvrage']
 
-    # Get episode list from epguides.com
-    show_url = 'http://epguides.com/common/exportToCSV.asp?rage=' + show_id
-    r = urllib2.urlopen(show_url)
+    # No TV rage id found
+    if show_id == '':
+        print "no id."
+        return 0
 
-    # Need to strip some text before and after the data portion of file
-    raw = r.read()
-    begin = raw.find('<pre>')  # beginning position of csv file
-    end = raw.find('</pre>')   # End position of csv fiel
+    try:
+        # Get episode list from epguides.com
+        show_url = 'http://epguides.com/common/exportToCSV.asp?rage=' + show_id
+        r = urllib2.urlopen(show_url)
 
-    raw2 = raw[begin + 7:end].strip()
-    reader = csv.reader(raw2.split('\n'), delimiter=',')
+        # Need to strip some text before and after the data portion of file
+        raw = r.read()
+        begin = raw.find('<pre>')  # beginning position of csv file
+        end = raw.find('</pre>')   # End position of csv fiel
 
-    # Get headers from the CSV file and prepare it for CREATE TABLE statement
-    headers = reader.next()
-    headers = [header.replace('?', '').replace(' ', '_') for header in headers]
-    headers = ["show_name"] + headers
+        raw2 = raw[begin + 7:end].strip()
+        reader = csv.reader(raw2.split('\n'), delimiter=',')
 
-    column_names = [('%s varchar' % header) for header in headers]
-    column_names = ',\n'.join(column_names)
+        # Get headers from the CSV file and prepare it for CREATE TABLE statement
+        headers = reader.next()
+        headers = [header.replace('?', '').replace(' ', '_') for header in headers]
+        headers = ["show_name"] + headers
 
-    # Drop table if it exists, and recreate it
-    create_query = "CREATE TABLE IF NOT EXISTS "+EP_LIST+'('+column_names+')'
-    c.execute(create_query)
+        column_names = [('%s varchar' % header) for header in headers]
+        column_names = '(' + ','.join(column_names) + ')'
 
-    c.execute("DELETE FROM " + EP_LIST + " " +
-              "WHERE show_name = ?", (show_name,))
+        #  Create table if it exists
+        dm.query("CREATE TABLE IF NOT EXISTS " + EP_LIST + column_names)
 
-    episodes = []
+        # Delete data for current show off table
+        dm.query("DELETE FROM " + EP_LIST + " " + "WHERE show_name = ?",
+                 (show_name,))
 
-    for row in reader:
-        episodes.append(tuple([show_name] + row))
+        episodes = []
 
-    c.executemany("INSERT INTO " + EP_LIST + " VALUES (" +
-                  ','.join(['?'] * len(headers)) + ")", episodes)
+        for row in reader:
+            episodes.append(tuple([show_name] + row))
 
-    conn.commit()
-    conn.close()
+        dm.querymany("INSERT INTO " + EP_LIST + " VALUES (" +
+                     ','.join(['?'] * len(headers)) + ")", episodes)
 
+        return 1
+    except:
+        print "Cannot add show"
 
 def str_to_date(date):
     """
@@ -126,49 +145,18 @@ def str_to_date(date):
     return dt.strptime(date, '%d/%b/%y')
 
 
-def find_next_airdates(show_name):
-
-    conn = sqlite3.connect("tvshows.db")
-    conn.text_factory = str
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-
-    results = c.execute("SELECT show_name, season, episode, airdate, title " +
-                        "FROM " + EP_LIST + " " +
-                        "WHERE show_name = ? AND special = 'n'", (show_name,))
-
-    results = results.fetchall()
-
-    airdates = [str_to_date(row['airdate']) for row in results]
-
-    days_to_next_air = [(date - dt.now()).days for date in airdates]
-
-    min_days_to_next = min([days for days in days_to_next_air if days >= 0])
-
-    r = [a
-         for a
-         in results
-         if (str_to_date(a['airdate']) - dt.now()).days == min_days_to_next]
-
-    return r
-
-
-class Show:
-
+class Show(object):
+    """Show class. will hold general show info and info about every episode"""
     def __init__(self, show_name):
 
-        add_show_to_db(show_name)
-
-        db = sqlite3.connect('tvshows.db')
-        db.text_factory = str
-        db.row_factory = sqlite3.Row
-        curs = db.cursor()
+        # If no show info found, return nothing
+        if add_show_to_db(show_name) == 0:
+            return None
 
         # Show info
-        show_result = curs.execute("SELECT * " +
-                                   "FROM " + SHOW_LIST + " " +
-                                   "WHERE title = ?", (show_name,))
-
+        show_result = dm.query("SELECT * " +
+                               "FROM " + SHOW_LIST + " " +
+                               "WHERE title = ?", (show_name,))
         show_result = show_result.fetchall()[0]
 
         self.id = show_result['tvrage']
@@ -179,65 +167,93 @@ class Show:
         self.network = show_result['network']
 
         # Episode info
-        seasons_result = curs.execute("SELECT DISTINCT season " +
-                                      "FROM " + EP_LIST + " " +
-                                      "WHERE show_name = ?", (show_name,))
+        season_raw = dm.query("SELECT DISTINCT season " +
+                              "FROM " + EP_LIST + " " +
+                              "WHERE show_name = ?", (show_name,))
+        season_raw = season_raw.fetchall()
 
-        seasons_result = seasons_result.fetchall()
-
+        # seasons will hold every single episode of the show
         self.seasons = {}
-        for s in seasons_result:
-            episode_result = curs.execute("SELECT episode, airdate, title " +
-                                          "FROM " + EP_LIST + " " +
-                                          "WHERE show_name = ? and season = ?",
-                                          (show_name, s['season']))
-            episode_result = episode_result.fetchall()
 
-            episodes = {}
-            for e in episode_result:
-                episodes[e['episode']] = Episode(s['season'],
-                                                 e['episode'],
-                                                 e['title'],
-                                                 str_to_date(e['airdate']))
+        for season in season_raw:
 
-            self.seasons[s['season']] = episodes
+            # Current season string
+            current_season = Season(show_name, season[SEASON_NUM])
 
-    def get_next_airdate(self):
+            self.seasons[season[SEASON_NUM]] = current_season
+
+    def get_next_airdates(self):
         """
         Gets next air date of show
         TODO: add stuff to do if show is over
         """
-        cur_min_days = None
+        # Array of unaired Episodes
+        unaired_eps = []
 
+        # Loops through every episode of the show
         for season in self.seasons:
-            for episode in self.seasons[season]:
+            for episode in self.seasons[season].episodes:
 
-                curr_airdate = self.seasons[season][episode].airdate
+                # Get number of days to each episode
+                airdate = self.seasons[season].episodes[episode].airdate
+                days_to_ep = (airdate - dt.now()).days
 
-                curr_days_to_ep = (curr_airdate - dt.now()).days
+                # Check to see if each episode has aired or not
+                hasnt_aired = (days_to_ep >= 0)
 
-                hasnt_aired = (curr_days_to_ep >= 0)
-                curr_ep_is_closer = (curr_days_to_ep < cur_min_days)
+                # If episode hasn't aired already, append Episode to an array
+                if hasnt_aired:
+                    unaired_eps.append(self.seasons[season].episodes[episode])
 
-                if hasnt_aired and (curr_ep_is_closer or cur_min_days is None):
-                    cur_min_days = curr_days_to_ep
-                    next_ep = (season, episode)
+        # Sort by airdate
+        sorted_unaired = sorted(unaired_eps, key=lambda ep: ep.airdate)
 
-        # Prints out the info for the next episode
-        next_episode = self.seasons[next_ep[0]][next_ep[1]]
+        for episode in sorted_unaired:
+            print episode
 
-        print "Next episode '%s'" % next_episode['title']
-        print "Airs in %s days on %s" % (cur_min_days,
-                                         next_episode['airdate'])
+        return sorted_unaired
 
-    def __str__(self):
-        return self.id
+    # Do I need a getter method to get seasons?
+    def season(self, seas):
+        list_of_seasons = [int(s) for s in self.seasons.keys()]
+        if seas in list_of_seasons:
+            return self.seasons[str(s)]
+        else:
+            print "Enter a valid season"
 
 
-class Episode:
+class Season(object):
+    """Season object will hold episodes of the season"""
 
+    def __init__(self, show_name, season):
+
+        season_eps_raw = dm.query("SELECT episode, airdate, title " +
+                                  "FROM " + EP_LIST + " " +
+                                  "WHERE special = 'n' "
+                                  "  and show_name = ? and season = ?",
+                                  (show_name, season))
+        season_eps_raw = season_eps_raw.fetchall()
+
+        self.episodes = {}
+
+        for ep in season_eps_raw:
+            self.episodes[ep[EP_NUM]] = Episode(season,
+                                                ep[EP_NUM],
+                                                ep[EP_TITLE],
+                                                str_to_date(ep[EP_AIRDATE]))
+
+    # Do I need a getter method to get episodes?
+    def episode(self, ep):
+        list_of_eps = [int(e) for e in self.episodes.keys()]
+        if ep in list_of_eps:
+            return self.episodes[str(e)]
+        else:
+            print "Enter a valid season"
+
+
+class Episode(object):
+    """Episode class that will hold the general info"""
     def __init__(self, season, episode, title, airdate):
-
         self.season = season
         self.episode = episode
         self.title = title
@@ -250,46 +266,22 @@ class Episode:
                                                    self.airdate)
 
 
-# Start test
-db = sqlite3.connect('tvshows.db')
-db.text_factory = str
-db.row_factory = sqlite3.Row
-curs = db.cursor()
+class Favourite_Shows(object):
 
-# Try array of shows
-fav_shows = ["Game of Thrones",
-             "Breaking Bad",
-             "Mad Men",
-             "Louie",
-             "Last Week Tonight with John Oliver",
-             "Bob's Burgers"]
+    def __init__(self):
+        self.show_list = {}
 
-for s in fav_shows:
-    add_show_to_db(s)
+    def add_show(self, show_name):
+        if show_name not in self.show_list.keys():
+            self.show_list[show_name] = Show(show_name)
+        else:
+            print "Show already added"
 
-
-print "********************************************"
-print "Favourite shows and their season count"
-a = curs.execute("SELECT show_name, count(distinct season) as ep_cnt " +
-                 "FROM " + EP_LIST + " " +
-                 "WHERE special = 'n' " +
-                 "GROUP BY 1")
-
-print a.fetchall()
-print
-
-# Test if a show cannot be found
-print "********************************************"
-print "trying to add fake show to db:"
-add_show_to_db("made up show")
+    def remove_show(self, show_name):
+        if show_name in self.show_list.keys():
+            del self.show_list[show_name]
+        else:
+            print "Show not added"
 
 
-print "********************************************"
-print "Print next air date for a show::"
-
-find_next_airdate("Bob's Burgers")
-
-
-
-# TODO
-# Create Classes for a show which holds an array of episodes? which are also a class?
+dm = DatabaseManager("tvshows.db")
