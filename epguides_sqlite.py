@@ -13,7 +13,6 @@ EP_NUM = 'episode'
 EP_TITLE = 'title'
 EP_AIRDATE = 'airdate'
 
-
 def str_to_date(date):
     """
     Takes an input string of the form, dd/mmm/yy, and converts it to a datetime
@@ -23,7 +22,6 @@ def str_to_date(date):
 
 
 def refresh_show_list():
-
     url = 'http://epguides.com/common/allshows.txt'
 
     try:
@@ -61,7 +59,6 @@ def insert_values_into_table(values, table_name, headers):
 
 
 def get_show_tvrage_id(show_name):
-
     r = dm.query("SELECT tvrage " +
                  "FROM " + SHOW_LIST + " " +
                  "WHERE title = ?", (show_name,))
@@ -80,10 +77,8 @@ def get_show_tvrage_id(show_name):
 
 
 def clean_csv_headers(headers):
-
     headers = [header.replace('?', '') for header in headers]
     headers = [header.replace(' ', '_') for header in headers]
-
     return headers
 
 
@@ -183,9 +178,10 @@ class DatabaseManager(object):
             return -1
 
     def show_exists_in_db(self, show_name):
-
         row_count = dm.query(
-            "SELECT count(1) FROM " + EP_LIST + " WHERE show_name = ?",
+            "SELECT count(1) " +
+            "FROM " + EP_LIST + " " +
+            "WHERE show_name = ?",
             (show_name,))
 
         row_count = row_count.fetchone()[0]
@@ -193,7 +189,6 @@ class DatabaseManager(object):
         return True if row_count > 0 else False
 
     def get_show_info(self, show_name):
-
         show_result = dm.query(
             "SELECT * " +
             "FROM " + SHOW_LIST + " " +
@@ -205,12 +200,10 @@ class DatabaseManager(object):
         return show_result
 
     def get_episode_info(self, show_name, season):
-
         season_eps_raw = dm.query(
             "SELECT episode, airdate, title " +
             "FROM " + EP_LIST + " " +
-            "WHERE special = 'n' "
-            "  and show_name = ? and season = ?",
+            "WHERE special = 'n' and show_name = ? and season = ?",
             (show_name, season))
 
         season_eps_raw = season_eps_raw.fetchall()
@@ -218,7 +211,6 @@ class DatabaseManager(object):
         return season_eps_raw
 
     def get_list_of_seasons_for_show(self, show_name):
-
         season_raw = dm.query(
             "SELECT DISTINCT season " +
             "FROM " + EP_LIST + " " +
@@ -235,7 +227,6 @@ class DatabaseManager(object):
 
 class Show(object):
     """Show class. will hold general show info and info about every episode"""
-
     def __init__(self, show_name):
 
         if not dm.show_exists_in_db(show_name):
@@ -287,7 +278,6 @@ class Show(object):
 
 class Season(object):
     """Season object will hold episodes of the season"""
-
     def __init__(self, show_name, season):
 
         season_eps_raw = dm.get_episode_info(show_name, season)
@@ -303,7 +293,7 @@ class Season(object):
 
 
 class Episode(object):
-
+    """Episode object hold info about an episode"""
     def __init__(self, season, episode, title, airdate):
         self.season = season
         self.episode = episode
@@ -316,11 +306,13 @@ class Episode(object):
                                               self.title)
 
 
+refresh_show_list()
+
 dm = DatabaseManager("tvshows.db")
 
-# refresh_show_list()
-# add_show_to_db("Bob's Burgers")
-
+add_show_to_db("Better Call Saul")
+add_show_to_db("Bob's Burgers")
+add_show_to_db("Game of Thrones")
 
 saul = Show("Better Call Saul")
 bob = Show("Bob's Burgers")
@@ -329,3 +321,9 @@ got = Show("Game of Thrones")
 saul.print_next_air_ep()
 bob.print_next_air_ep()
 got.print_next_air_ep()
+
+
+
+
+add_show_to_db("Rick and Morty")
+rick = Show("Rick and Morty")
